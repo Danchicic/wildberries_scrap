@@ -1,35 +1,17 @@
 import time
-from selenium import webdriver
+import datetime
+
 import fake_useragent
+
 import chromedriver_autoinstaller
+from selenium import webdriver
 from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote import webelement
-
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import NoSuchElementException
 
-import os
-
-
-def union_results(pages_count: int):
-    """
-    Объединяет созданные файлы
-    :param pages_count:
-    """
-    data = []
-    for i in range(1, pages_count + 1):
-        with open(f"result_page_{i}.txt", 'r') as f:
-            try:
-                lst: list[str] = f.readlines()
-                for el in lst:
-                    data.append(el)
-            except TypeError:
-                print('пустой файл')
-        # удаление файлов чтобы не засорять директорию
-        os.remove(f"result_page_{i}.txt")
-    with open("main_result.txt", 'w+') as f:
-        f.writelines(data)
+import pyautogui
 
 
 def start_driver() -> webdriver:
@@ -50,7 +32,7 @@ def start_driver() -> webdriver:
     return driver
 
 
-def get_page(driver: webdriver):
+def get_page(driver: webdriver) -> None:
     driver.get(url='https://www.wildberries.ru/')
 
 
@@ -104,12 +86,84 @@ def get_url(driver: webdriver) -> str:
     return driver.current_url
 
 
+def get_info_and_write(driver: webdriver, cards: list[webelement], url_zero: str,
+                       writing_file) -> webdriver:
+    """
+
+    :param driver:
+    :param cards: карточки товаров
+    :param url_zero: адрес главной страницы
+    :param writing_file: наш открытый файл на запись
+    :return:
+    """
+    ogrn: str
+    try:
+        for i, card in enumerate(cards):
+            try:
+                # Переходим к карточке
+                card.click()
+            except Exception:
+                print("[ERROR] Не удалось кликнуть на карточку")
+                print("[INFO] Выполняю переход к основной странице")
+
+                now = datetime.datetime.now()
+                print(f"time ={now}\n[ERROR] Some wrong check log file")
+                with open(f"{now}.txt", 'w+') as f:
+                    f.write(current_url)
+
+                driver.get(url=url_zero)
+                return driver
+
+            # Ожидание для прогрузки страницы
+            if i == 0:
+                driver.implicitly_wait(10)
+                time.sleep(2)
+
+            try:
+                time.sleep(1)
+                # Получаем огрн
+                ogrn: str = get_org(driver=driver)
+
+            except Exception:
+                print("[ERROR] Не удалось получить огрн, попробуйте увеличить задержку")
+                current_url = driver.current_url
+                if "seller" in current_url:
+                    driver.execute_script("window.history.go(-1)")
+
+            try:
+                # получаем url-адрес товара
+                product_url: str = get_url(driver=driver)
+            except Exception:
+                print("[ERROR] Не удалось получить url")
+
+            try:
+                # Возвращаемся к главной странице
+                driver.find_element(By.CLASS_NAME, "breadcrumbs__back").click()
+            except Exception:
+                current_url = driver.current_url
+                # if "seller" in current_url:
+                #     driver.execute_script("window.history.go(-1)")
+                driver.get(url=url_zero)
+                print("[ERROR] Невозможно вернутся к главной странице ")
+            if ogrn == 'Нет огрн':
+                continue
+            writing_file.write(f"{ogrn}:{product_url}\n")
+            # testing print
+            print("card", i + 1)
+
+        # Записываем значения в наш файл
+    except Exception:
+        now = datetime.datetime.now()
+        print(f"time ={now}\n[ERROR] Some wrong check log file")
+        with open(f"{now}.txt", 'w+') as f:
+            f.write(current_url)
+    finally:
+        return driver
+
+
 def main():
-    data: list[str] = []
     main_wrapper: webelement
     cards: list[webelement]
-    ogrn: str = ''
-    product_url: str = ''
     offset = 500
     offset_param = 400  # примерное значение для 15 дюймового монитора одна карточка - 431 пиксель
 
@@ -118,98 +172,64 @@ def main():
     get_page(driver=driver)
     # ожидаем ввод пользователя
     if wait_user():
-
-        # В случае возникновения ошибки перейдем по этому адресу
         url_zero = driver.current_url
         print(url_zero)
-        pages_count = 0
-        # пагинация всех страниц
-        while 1:
-            pages_count += 1
-            try:
-                # скроллинг всей страницы чтобы не потерять ни один товар
-                for _ in range(20):
-                    time.sleep(1)
-                    driver.execute_script(f"window.scrollTo(0, {offset});")
-                    offset += offset_param
-                offset = 500  # возврат к первому значению чтобы скролить следующие страницы
-
-            except Exception:
-                driver.refresh()
-                driver.implicitly_wait(5)
-                print("[Error] Не удалось проскролить всю страницу")
-
-            try:
-                # переход к элементу с большими карточками
-                main_wrapper: webelement = driver.find_element(By.CLASS_NAME, 'product-card-list')
-                # Все большие карточки находятся в тэгах article
-                cards: list[webelement] = main_wrapper.find_elements(By.TAG_NAME, 'article')
-            except Exception:
-                print(
-                    f"[ERROR] Невозможно найти карточки, возможно плохое интернет соединение, перезагружаю страничку:")
-                driver.refresh()
-                driver.implicitly_wait(5)
-            with open(f'result_page_{pages_count}.txt', 'w+') as f:
-                for i, card in enumerate(cards):
+        try:
+            # сразу открываем файл на запись
+            with open(f'{url_zero.split("/")[-1]}-{datetime.datetime.now().time()}.txt', 'w+') as in_file:
+                # В случае возникновения ошибки перейдем по этому адресу
+                pages_count = 0
+                # пагинация всех страниц
+                while 1:
+                    pages_count += 1
+                    print(f'New page num: {pages_count}')
                     try:
-                        # Переходим к карточке
-                        card.click()
+                        # скроллинг всей страницы чтобы не потерять ни один товар
+                        for _ in range(22):
+                            time.sleep(1)
+                            driver.execute_script(f"window.scrollTo(0, {offset});")
+                            offset += offset_param
+                        offset = 500  # возврат к первому значению чтобы скролить следующие страницы
+
                     except Exception:
-                        print("[ERROR] Не удалось кликнуть на карточку")
-                        print("[INFO] Выполняю переход к основной странице")
-                        driver.get(url=url_zero)
+                        driver.refresh()
+                        driver.implicitly_wait(5)
+                        print("[Error] Не удалось проскролить всю страницу")
+
+                    try:
+                        # переход к элементу с большими карточками
+                        main_wrapper: webelement = driver.find_element(By.CLASS_NAME, 'product-card-list')
+                        # Все большие карточки находятся в тэгах article
+                        cards: list[webelement] = main_wrapper.find_elements(By.TAG_NAME, 'article')
+                    except Exception:
+                        print(
+                            f"[ERROR] Невозможно найти карточки, возможно плохое интернет соединение, \
+                            перезагружаю страничку:")
+
+                        driver.refresh()
+                        driver.implicitly_wait(5)
+
+                    driver: webdriver = get_info_and_write(driver=driver, cards=cards,
+                                                           url_zero=url_zero, writing_file=in_file
+                                                           )
+                    pyautogui.moveTo(100, 100, duration=0.25)
+                    pyautogui.moveTo(300, 300, duration=0.25)
+
+                    if 'Следующая страница' not in driver.find_element(By.CLASS_NAME, 'pagination').text:
                         break
-
-                    # Ожидание для прогрузки страницы
-                    if i == 0:
-                        driver.implicitly_wait(10)
-                        time.sleep(2)
-
                     try:
-                        time.sleep(1)
-                        # Получаем огрн
-                        ogrn: str = get_org(driver=driver)
-
-                    except Exception:
-                        print("[ERROR] Не удалось получить огрн, попробуйте увеличить задержку")
-                        current_url = driver.current_url
-                        if "seller" in current_url:
-                            driver.execute_script("window.history.go(-1)")
-
-                    try:
-                        # получаем url-адрес товара
-                        product_url: str = get_url(driver=driver)
-                    except Exception:
-                        print("[ERROR] Не удалось получить url")
-
-                    try:
-                        # Возвращаемся к главной странице
-                        driver.find_element(By.CLASS_NAME, "breadcrumbs__back").click()
-                    except Exception:
-                        current_url = driver.current_url
-                        # if "seller" in current_url:
-                        #     driver.execute_script("window.history.go(-1)")
-                        driver.get(url=url_zero)
-                        print("[ERROR] Невозможно вернутся к главной странице ")
-                    if ogrn == 'Нет огрн':
-                        continue
-                    data.append(f"{ogrn}:{product_url}\n")
-                    # testing print
-                    print("iter", i)
-
-                # Записываем значения в наш файл
-                f.writelines(data)
-            if 'Следующая страница' not in driver.find_element(By.CLASS_NAME, 'pagination').text:
-                break
-            try:
-                # переход на следующую страницу
-                a = driver.find_element(By.LINK_TEXT, 'Следующая страница').get_attribute('href')
-                driver.get(a)
-                data.clear()
-            except Exception as ex:
-                print(f"[ERROR] Невозможно перейти к следующей странице\n{ex}")
-        # Объединение результатов
-        union_results(pages_count)
+                        url_zero = driver.current_url
+                        # переход на следующую страницу
+                        a = driver.find_element(By.LINK_TEXT, 'Следующая страница').get_attribute('href')
+                        driver.get(a)
+                    except Exception as ex:
+                        print(f"[ERROR] Невозможно перейти к следующей странице\n{ex}")
+        except Exception as ex:
+            print(f'[ERROR] Some wrong\n{ex}')
+            now = datetime.datetime.now()
+            with open(f'{now}.txt', 'w+') as f:
+                f.write(url_zero)
+    print(f"Последняя страница была: {url_zero}")
 
 
 if __name__ == '__main__':
